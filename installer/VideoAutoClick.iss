@@ -10,15 +10,15 @@
 #define MyAppExeName   "VideoAutoClick.exe"
 
 [Setup]
-; AppId는 프로그램마다 고유해야 함 (그대로 두셔도 됩니다)
-AppId={{8F3C2A51-9D7B-4E6A-B1C4-VideoAutoClick02}}
+; AppId는 프로그램마다 고유해야 함 (표준 16진수 GUID 형식으로 수정됨)
+AppId={{8F3C2A51-9D7B-4E6A-B1C4-000000000002}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher=VideoAutoClick
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-; 프로그램 파일 폴터에 설치하므로 관리자 권한 필요
+; 프로그램 파일 폴더에 설치하므로 관리자 권한 필요
 PrivilegesRequired=admin
 OutputDir=..\installer_output
 OutputBaseFilename={#MyAppName}-Setup-{#MyAppVersion}
