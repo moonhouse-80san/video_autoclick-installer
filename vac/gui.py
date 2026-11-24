@@ -490,8 +490,7 @@ class App:
 
     def pick_region(self):
         select_region(self.root, self._on_region,
-                      "동영상이 재생되는 영역을 드래그하세요
-(Esc / 우클릭: 취소)")
+                      "동영상이 재생되는 영역을 드래그하세요\n(Esc / 우클릭: 취소)")
 
     def _on_region(self, rect):
         if not rect:
@@ -538,8 +537,7 @@ class App:
             self.images_dir.mkdir(parents=True, exist_ok=True)
             imwrite_unicode(self._image_path(i), frame)
         except OSError as exc:
-            messagebox.showerror("이미지 저장", f"이미지를 저장하지 못했습니다.
-{exc}")
+            messagebox.showerror("이미지 저장", f"이미지를 저장하지 못했습니다.\n{exc}")
             return
         self.cfg.steps[i].image = self._image_path(i).name
         self._save()
@@ -548,8 +546,7 @@ class App:
 
     def capture_image(self, i):
         select_region(self.root, partial(self._on_image_rect, i),
-                      f"{i + 1}번으로 등록할 화면 부분을 드래그하세요
-(Esc / 우클릭: 취소)")
+                      f"{i + 1}번으로 등록할 화면 부분을 드래그하세요\n(Esc / 우클릭: 취소)")
 
     def _on_image_rect(self, i, rect):
         if not rect:
@@ -583,8 +580,7 @@ class App:
 
     def pick_click(self, i):
         pick_point(self.root, partial(self._on_click_point, i),
-                   f"{i + 1}번에서 클릭할 위치를 클릭하세요
-(Esc / 우클릭: 취소)")
+                   f"{i + 1}번에서 클릭할 위치를 클릭하세요\n(Esc / 우클릭: 취소)")
 
     def _on_click_point(self, i, pt):
         if not pt:
@@ -671,8 +667,7 @@ class App:
 
     def _append_log(self, line: str):
         self.log_text.configure(state="normal")
-        self.log_text.insert("end", line + "
-")
+        self.log_text.insert("end", line + "\n")
         if int(self.log_text.index("end-1c").split(".")[0]) > 500:
             self.log_text.delete("1.0", "100.0")
         self.log_text.see("end")
