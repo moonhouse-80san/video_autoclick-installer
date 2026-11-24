@@ -110,23 +110,23 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(len(clicks), 1)
 
     def test_image_click_ignores_video_motion_and_origin_offset(self):
+        """감시 영역(음수 좌표 모니터 포함) 안에서 이미지를 찾으면 영상 움직임과 무관하게 클릭하고 감시를 계속한다."""
         rng = np.random.default_rng(3)
-        base = rng.integers(0, 255, (200, 300, 3), dtype=np.uint8)
         tpl = rng.integers(0, 255, (20, 30, 3), dtype=np.uint8)
-        with_tpl = base.copy()
-        with_tpl[80:100, 50:80] = tpl                   # 중심 (65, 90)
 
-        class Screen:
-            def __init__(s, clock):
-                s.clock = clock
         plans = [StepPlan(0, None, tpl)]
         settings = Settings(freeze_seconds=5, interval=0.5, idle_wait=0, retry_seconds=0)
         clock, clicks = Clock(), []
 
         class G(FakeGrabber):
-            def grab_virtual(s):
-                return (with_tpl if clock.t >= 12 else base), (-1920, 10)
-        eng = Engine((0, 0, W, H), plans, settings, G(clock, lambda t: noise(t)),
+            def grab_region(s, rect):
+                # 매 tick마다 배경이 변해도(움직이는 영상) t>=12부터 영역 내부 (50..80, 80..100)에 이미지 등장
+                frame = rng.integers(0, 255, (200, 300, 3), dtype=np.uint8)
+                if clock.t >= 12:
+                    frame[80:100, 50:80] = tpl          # 영역 내 중심 (65, 90)
+                return frame
+
+        eng = Engine((-1920, 10, 300, 200), plans, settings, G(clock, lambda t: noise(t)),
                      lambda x, y: clicks.append((clock.t, x, y)), lambda: 99.0,
                      lambda m: None, lambda s: None, clock)
         res = None
@@ -138,34 +138,34 @@ class EngineTests(unittest.TestCase):
         self.assertGreaterEqual(len(clicks), 1)
         self.assertGreaterEqual(clicks[0][0], 12)
         self.assertLess(clicks[0][0], 13)   # 영상이 계속 움직여도 이미지가 나타나자마자 클릭
-        self.assertEqual(clicks[0][1:], (65 - 1920, 90 + 10))   # 음수 좌표(왼쪽 모니터)도 변환
+        self.assertEqual(clicks[0][1:], (65 - 1920, 90 + 10))   # 영역 시작 좌표(-1920, 10)가 더해진 절대 좌표
 
-    def test_image_then_coordinate_step_mixed(self):
+    def test_image_step_always_scans_priority_and_stays_watching(self):
+        """이미지 단계가 있으면 이미지 우선순위 스캔 모드로 동작하며 클릭 후에도 감시를 유지한다."""
         rng = np.random.default_rng(5)
         base = rng.integers(0, 255, (200, 300, 3), dtype=np.uint8)
         tpl = rng.integers(0, 255, (20, 30, 3), dtype=np.uint8)
         with_tpl = base.copy()
-        with_tpl[10:30, 10:40] = tpl
+        with_tpl[10:30, 10:40] = tpl  # 중심 (25, 20)
         plans = [StepPlan(0, None, tpl), StepPlan(1, (7, 7), None)]
         settings = Settings(freeze_seconds=5, interval=0.5, idle_wait=0, retry_seconds=0)
         clock, clicks = Clock(), []
 
         class G(FakeGrabber):
-            def grab_virtual(s):
-                return (with_tpl if clock.t >= 3 else base), (0, 0)
-        eng = Engine((0, 0, W, H), plans, settings, G(clock, moving_windows((0, 8))),
+            def grab_region(s, rect):
+                return with_tpl if 3 <= clock.t < 4 else base
+
+        eng = Engine((0, 0, 300, 200), plans, settings, G(clock, moving_windows((0, 8))),
                      lambda x, y: clicks.append((clock.t, x, y)), lambda: 99.0,
                      lambda m: None, lambda s: None, clock)
         res = None
-        while res is None and clock.t < 40:
+        while res is None and clock.t < 20:
             res = eng.tick()
             clock.t += 0.5
-        self.assertEqual(res[0], "completed")
-        self.assertEqual([(x, y) for _, x, y in clicks], [(25, 20), (7, 7)])
-        self.assertGreaterEqual(clicks[1][0], 8 + 5)   # 2번(좌표)은 여전히 정지 감지 후 클릭
+        self.assertIsNone(res)
+        self.assertEqual([(x, y) for _, x, y in clicks], [(25, 20)])
 
     def test_waits_while_user_is_active(self):
-        clock_ref = {}
         plans = [StepPlan(0, (5, 5), None)]
         settings = Settings(freeze_seconds=5, interval=0.5, idle_wait=1.0, retry_seconds=0)
         clock, clicks = Clock(), []
@@ -203,7 +203,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(eng.run(ev)[0], "stopped")
 
     def test_image_skips_missing_and_clicks_next(self):
-        """1번 이미지가 없으면 2번을 클릭하고, 클릭 후에도 감시가 계속된다(loop)."""
+        """1번 이미지가 없으면 2번을 클릭하고, 클릭 후에도 감시가 계속된다."""
         rng = np.random.default_rng(7)
         base = rng.integers(0, 255, (200, 300, 3), dtype=np.uint8)
         tpl1 = rng.integers(0, 255, (20, 30, 3), dtype=np.uint8)  # never appears
@@ -216,17 +216,17 @@ class EngineTests(unittest.TestCase):
         clock, clicks = Clock(), []
 
         class G(FakeGrabber):
-            def grab_virtual(s):
-                return with_tpl2, (0, 0)
+            def grab_region(s, rect):
+                return with_tpl2 if clock.t < 1.0 else base
 
-        eng = Engine((0, 0, W, H), plans, settings, G(clock, lambda t: STATIC),
+        eng = Engine((0, 0, 300, 200), plans, settings, G(clock, lambda t: STATIC),
                      lambda x, y: clicks.append((round(clock.t, 1), x, y)), lambda: 99.0,
                      lambda m: None, lambda s: None, clock)
         res = None
         while res is None and clock.t < 15:
             res = eng.tick()
             clock.t += 0.5
-        self.assertIsNone(res)  # loop이므로 completed 안 함, 감시 계속
+        self.assertIsNone(res)  # 감시 계속
         self.assertEqual(len(clicks), 1)
         self.assertEqual(clicks[0][1:], (85, 50))  # 2번만 클릭
         self.assertLess(clicks[0][0], 2)  # 1번을 기다리지 않고 바로 2번 클릭
