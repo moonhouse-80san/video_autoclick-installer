@@ -24,7 +24,7 @@ jobs:
         run: python -m unittest discover -s tests
 
       - name: Build exe
-        run: python -m PyInstaller --noconfirm --clean --onefile --noconsole --name VideoAutoClick main.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --noconsole --paths . --collect-submodules vac --name VideoAutoClick main.py
 
       - name: Package (zip)
         shell: pwsh
