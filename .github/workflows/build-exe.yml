@@ -2,7 +2,7 @@ name: Build Windows exe + Installer
 
 on:
   workflow_dispatch:        # GitHub 저장소의 Actions 탭에서 [Run workflow] 버튼으로 실행
-  push해도:
+  push:
     tags: ["v*"]            # v2.0 같은 태그를 push해도 자동 실행
 
 jobs:
