@@ -1,9 +1,9 @@
 name: Build Windows exe + Installer
 
 on:
-  workflow_dispatch:        # GitHub 저장소의 Actions 탭에서 [Run workflow] 버튼으로 실행
+  workflow_dispatch: # GitHub 저장소의 Actions 탭에서 [Run workflow] 버튼으로 실행
   push:
-    tags: ["v*"]            # v2.0 같은 태그를 push해도 자동 실행
+    tags: ["v*"] # v2.0 같은 태그를 push해도 자동 실행
 
 jobs:
   build:
@@ -30,8 +30,8 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path package | Out-Null
-          Copy-Item dist/VideoAutoClick.exe package/
-          Copy-Item 사용설명서.txt package/
+          Copy-Item dist\VideoAutoClick.exe package\
+          Copy-Item -LiteralPath "사용설명서.txt" -Destination package\
 
       - uses: actions/upload-artifact@v4
         with:
@@ -43,9 +43,10 @@ jobs:
         run: choco install innosetup -y --no-progress
 
       - name: Build installer
-         shell: cmd
-         run: |
-           "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /O"installer_output" installer\VideoAutoClick.iss
+        shell: cmd
+        run: |
+          if not exist "installer_output" mkdir "installer_output"
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /O"installer_output" installer\VideoAutoClick.iss
 
       - uses: actions/upload-artifact@v4
         with:
