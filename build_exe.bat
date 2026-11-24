@@ -21,7 +21,7 @@ echo Installing build tools...
 if errorlevel 1 goto build_error
 
 echo Building exe (this takes a few minutes)...
-%PYTHON_CMD% -m PyInstaller --noconfirm --clean --onefile --noconsole --paths . --collect-submodules vac --name VideoAutoClick main.py
+%PYTHON_CMD% -m PyInstaller --noconfirm --clean VideoAutoClick.spec
 if errorlevel 1 goto build_error
 
 echo.
