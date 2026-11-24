@@ -45,7 +45,7 @@ class Step:
 @dataclass
 class Settings:
     freeze_seconds: float = 5.0     # 이 시간 동안 변화가 없으면 '정지'
-    interval: float = 0.5           # 화면 비교 주기
+    interval: float = 2.0           # 화면 비교 주기 (기본 2초)
     motion_percent: float = 0.3     # 바뀐 픽셀 비율(%)이 이 값 이상이면 '움직임'
     idle_wait: float = 1.0          # 사용자가 마우스/키보드를 쓰는 중이면 클릭 보류
     retry_seconds: float = 15.0     # 클릭 후 이 시간 동안 안 움직이면 재시도 (0=끔)
@@ -103,7 +103,9 @@ class Config:
 
         steps = raw.get("steps")
         if isinstance(steps, list):
-            for i, item in enumerate(steps[:STEP_COUNT]):
+            count = max(STEP_COUNT, len(steps))
+            cfg.steps = [Step() for _ in range(count)]
+            for i, item in enumerate(steps):
                 if not isinstance(item, dict):
                     continue
                 image = item.get("image", "")

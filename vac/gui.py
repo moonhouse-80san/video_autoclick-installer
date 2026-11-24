@@ -16,7 +16,7 @@ import cv2
 
 from . import winapi
 from .capture import ScreenGrabber, imread_unicode, imwrite_unicode
-from .config import STEP_COUNT, Config, data_dir
+from .config import Config, Step, data_dir
 from .engine import Engine, build_plans
 from .overlay import pick_point, select_region
 
@@ -55,6 +55,10 @@ class App:
         self.stop_event = threading.Event()
         self.worker: threading.Thread | None = None
         self._photos: dict[str, tk.PhotoImage] = {}
+        self._drag_src: int | None = None
+        self._drag_target: int | None = None
+        self._drag_ghost: tk.Toplevel | None = None
+        self._default_row_bg: str = "SystemButtonFace"
 
         self.status_var = tk.StringVar(value="대기 중")
         self.region_text = tk.StringVar()
@@ -79,8 +83,7 @@ class App:
         self._build_ui()
         self._load_vars()
         self._refresh_region()
-        for i in range(STEP_COUNT):
-            self._refresh_step(i)
+        self._rebuild_steps()
 
         self.hotkeys = winapi.HotkeyListener({winapi.VK_F8: lambda: self.ui_queue.put(("toggle",))})
         self.hotkeys.start()
@@ -114,34 +117,264 @@ class App:
         ttk.Button(box, text="영역 드래그로 지정", command=self.pick_region).grid(row=1, column=1, sticky="w", pady=4)
         ttk.Button(box, text="미리보기 새로고침", command=self.refresh_region_preview).grid(row=2, column=1, sticky="w")
 
+    def _bind_drag(self, widget, idx: int):
+        widget.bind("<ButtonPress-1>", lambda e, i=idx: self._on_drag_start(e, i))
+        widget.bind("<B1-Motion>", lambda e, i=idx: self._on_drag_motion(e, i))
+        widget.bind("<ButtonRelease-1>", lambda e, i=idx: self._on_drag_drop(e, i))
+
+    def _create_step_row(self, parent, i: int):
+        # 삽입 위치 인디케이터 바 (위/아래 표시용)
+        top_bar = tk.Frame(parent, height=3, bg=self._default_row_bg)
+        top_bar.pack(fill="x", pady=(2, 0))
+
+        row = tk.Frame(parent, bd=1, relief="groove", padx=6, pady=5)
+        row.pack(fill="x", pady=(1, 1))
+        self._default_row_bg = row.cget("bg")
+        top_bar.configure(bg=self._default_row_bg)
+
+        grip = tk.Label(row, text=f"☰ {i + 1}번", font=(FONT, 10, "bold"), cursor="fleur", padx=4)
+        grip.grid(row=0, column=0, rowspan=2, padx=(0, 6))
+        self._bind_drag(grip, i)
+        self._bind_drag(row, i)
+
+        img = ttk.Label(row, text="이미지 없음", width=14, anchor="center", relief="groove")
+        img.grid(row=0, column=1, rowspan=2, padx=(0, 8))
+
+        bf = ttk.Frame(row)
+        bf.grid(row=0, column=2, sticky="w")
+        ttk.Button(bf, text="이미지 캡처", command=partial(self.capture_image, i)).pack(side="left")
+        ttk.Button(bf, text="파일 선택", command=partial(self.load_image, i)).pack(side="left", padx=4)
+        ttk.Button(bf, text="삭제", width=5, command=partial(self.clear_image, i)).pack(side="left")
+
+        del_btn = ttk.Button(row, text="단계 삭제", width=8, command=partial(self.remove_step, i))
+        del_btn.grid(row=0, column=3, padx=(8, 0), sticky="ne")
+
+        cf = ttk.Frame(row)
+        cf.grid(row=1, column=2, columnspan=2, sticky="w", pady=(4, 0))
+        coord_var = tk.StringVar()
+        ttk.Label(cf, textvariable=coord_var, width=26).pack(side="left")
+        ttk.Button(cf, text="좌표 지정", command=partial(self.pick_click, i)).pack(side="left")
+        ttk.Button(cf, text="삭제", width=5, command=partial(self.clear_click, i)).pack(side="left", padx=4)
+
+        self.step_widgets.append({
+            "row": row,
+            "grip": grip,
+            "top_bar": top_bar,
+            "img": img,
+            "coord": coord_var,
+            "del_btn": del_btn,
+        })
+
+    def _rebuild_steps(self):
+        self._destroy_drag_ghost()
+        for w in self.step_widgets:
+            for key in ("top_bar", "row"):
+                try:
+                    w[key].destroy()
+                except tk.TclError:
+                    pass
+        if hasattr(self, "_bottom_drop_bar") and self._bottom_drop_bar is not None:
+            try:
+                self._bottom_drop_bar.destroy()
+            except tk.TclError:
+                pass
+            self._bottom_drop_bar = None
+
+        self.step_widgets.clear()
+        total = len(self.cfg.steps)
+        for i in range(total):
+            self._create_step_row(self.steps_container, i)
+            self._refresh_step(i)
+
+        self._bottom_drop_bar = tk.Frame(self.steps_container, height=3, bg=self._default_row_bg)
+        self._bottom_drop_bar.pack(fill="x", pady=(0, 2))
+
+        if len(self.step_widgets) == 1:
+            self.step_widgets[0]["del_btn"].configure(state="disabled")
+
     def _build_steps(self, parent):
-        box = ttk.LabelFrame(parent, text="② 단계별 이미지 · 클릭 좌표 (1 → 2 → 3 순서)", padding=10)
+        box = ttk.LabelFrame(parent, text="② 단계별 이미지 · 클릭 좌표 (드래그로 순서 이동)", padding=10)
         box.pack(fill="x", pady=(10, 0))
-        for i in range(STEP_COUNT):
-            row = ttk.Frame(box)
-            row.pack(fill="x", pady=5)
-            ttk.Label(row, text=f"{i + 1}번", font=(FONT, 11, "bold")).grid(row=0, column=0, rowspan=2, padx=(0, 8))
-            img = ttk.Label(row, text="이미지 없음", width=14, anchor="center", relief="groove")
-            img.grid(row=0, column=1, rowspan=2, padx=(0, 8))
-            bf = ttk.Frame(row)
-            bf.grid(row=0, column=2, sticky="w")
-            ttk.Button(bf, text="이미지 캡처", command=partial(self.capture_image, i)).pack(side="left")
-            ttk.Button(bf, text="파일 선택", command=partial(self.load_image, i)).pack(side="left", padx=4)
-            ttk.Button(bf, text="삭제", width=5, command=partial(self.clear_image, i)).pack(side="left")
-            cf = ttk.Frame(row)
-            cf.grid(row=1, column=2, sticky="w", pady=(4, 0))
-            coord_var = tk.StringVar()
-            ttk.Label(cf, textvariable=coord_var, width=24).pack(side="left")
-            ttk.Button(cf, text="좌표 지정", command=partial(self.pick_click, i)).pack(side="left")
-            ttk.Button(cf, text="삭제", width=5, command=partial(self.clear_click, i)).pack(side="left", padx=4)
-            self.step_widgets.append({"img": img, "coord": coord_var})
+        top_bar = ttk.Frame(box)
+        top_bar.pack(fill="x", pady=(0, 4))
+        ttk.Label(top_bar, text="단계 추가:", foreground="#555").pack(side="left")
+        ttk.Button(top_bar, text="+", width=3, command=self.add_step).pack(side="left", padx=6)
+        ttk.Label(top_bar, text="☰ 또는 행을 드래그해 순서 변경", foreground="#777").pack(side="left", padx=4)
+
+        self.steps_container = ttk.Frame(box)
+        self.steps_container.pack(fill="x")
+        self._bottom_drop_bar = None
+
+    def add_step(self):
+        self.cfg.steps.append(Step())
+        idx = len(self.cfg.steps) - 1
+        self._rebuild_steps()
+        self._save()
+        self._log(f"{idx + 1}번 단계 추가")
+
+    def remove_step(self, idx: int):
+        if len(self.cfg.steps) <= 1:
+            messagebox.showinfo("단계 삭제", "최소 1개 이상의 단계가 필요합니다.")
+            return
+        if idx < 0 or idx >= len(self.cfg.steps):
+            return
+        removed = self.cfg.steps.pop(idx)
+        if removed.image:
+            try:
+                (self.images_dir / removed.image).unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._rebuild_steps()
+        self._save()
+        self._log(f"{idx + 1}번 단계 삭제")
+
+    # ------------------------------------------------------- drag & drop
+    def _create_drag_ghost(self, src: int, x_root: int, y_root: int):
+        self._destroy_drag_ghost()
+        try:
+            step = self.cfg.steps[src]
+            detail = []
+            if step.image:
+                detail.append("이미지")
+            if step.has_click():
+                detail.append(f"({step.click_x}, {step.click_y})")
+            sub = " · ".join(detail) if detail else "미설정"
+
+            ghost = tk.Toplevel(self.root)
+            ghost.overrideredirect(True)
+            ghost.attributes("-topmost", True)
+            try:
+                ghost.attributes("-alpha", 0.88)
+            except tk.TclError:
+                pass
+            lbl = tk.Label(
+                ghost,
+                text=f"☰ {src + 1}번 단계 이동 중  [{sub}]",
+                bg="#1d4ed8",
+                fg="white",
+                font=(FONT, 9, "bold"),
+                padx=10,
+                pady=5,
+                relief="solid",
+                bd=1,
+            )
+            lbl.pack()
+            ghost.geometry(f"+{x_root + 14}+{y_root - 14}")
+            self._drag_ghost = ghost
+        except tk.TclError:
+            self._drag_ghost = None
+
+    def _move_drag_ghost(self, x_root: int, y_root: int):
+        if self._drag_ghost is not None:
+            try:
+                self._drag_ghost.geometry(f"+{x_root + 14}+{y_root - 14}")
+            except tk.TclError:
+                pass
+
+    def _destroy_drag_ghost(self):
+        if self._drag_ghost is not None:
+            try:
+                self._drag_ghost.destroy()
+            except tk.TclError:
+                pass
+            self._drag_ghost = None
+
+    def _find_drop_index(self, y_root: int) -> int | None:
+        if not self.step_widgets:
+            return None
+        for idx, w in enumerate(self.step_widgets):
+            row = w["row"]
+            top_y = row.winfo_rooty()
+            bot_y = top_y + row.winfo_height()
+            if top_y <= y_root <= bot_y:
+                return idx
+        first_top = self.step_widgets[0]["row"].winfo_rooty()
+        if y_root < first_top:
+            return 0
+        last_bot = self.step_widgets[-1]["row"].winfo_rooty() + self.step_widgets[-1]["row"].winfo_height()
+        if y_root > last_bot:
+            return len(self.step_widgets) - 1
+        return None
+
+    def _update_drag_visuals(self, target: int | None):
+        src = self._drag_src
+        if self._bottom_drop_bar is not None:
+            try:
+                self._bottom_drop_bar.configure(bg=self._default_row_bg)
+            except tk.TclError:
+                pass
+
+        for i, w in enumerate(self.step_widgets):
+            try:
+                w["top_bar"].configure(bg=self._default_row_bg)
+                if src is not None and i == src:
+                    # 현재 끌고 있는 원본 행: 점선/연회색 비활성 스타일로 표시
+                    w["row"].configure(bg="#e5e7eb", highlightbackground="#6b7280", highlightthickness=1)
+                    w["grip"].configure(bg="#e5e7eb", fg="#6b7280")
+                elif src is not None and target is not None and i == target and target != src:
+                    # 이동될 목표 위치 행: 파란/노란 강조 + 삽입선 표시
+                    w["row"].configure(bg="#fef3c7", highlightbackground="#2563eb", highlightthickness=2)
+                    w["grip"].configure(bg="#fef3c7", fg="#1d4ed8")
+                    if target < src:
+                        w["top_bar"].configure(bg="#2563eb")
+                    elif target > src:
+                        if i + 1 < len(self.step_widgets):
+                            self.step_widgets[i + 1]["top_bar"].configure(bg="#2563eb")
+                        elif self._bottom_drop_bar is not None:
+                            self._bottom_drop_bar.configure(bg="#2563eb")
+                else:
+                    w["row"].configure(bg=self._default_row_bg, highlightthickness=0)
+                    w["grip"].configure(bg=self._default_row_bg, fg="#111827")
+            except tk.TclError:
+                pass
+
+    def _on_drag_start(self, event, idx: int):
+        if isinstance(event.widget, (tk.Button, ttk.Button)):
+            return
+        self._drag_src = idx
+        self._drag_target = idx
+        self._update_drag_visuals(idx)
+        self._create_drag_ghost(idx, event.x_root, event.y_root)
+
+    def _on_drag_motion(self, event, idx: int):
+        if self._drag_src is None:
+            return
+        self._move_drag_ghost(event.x_root, event.y_root)
+        target = self._find_drop_index(event.y_root)
+        if target is not None and target != self._drag_target:
+            self._drag_target = target
+            self._update_drag_visuals(target)
+            if self._drag_ghost is not None:
+                try:
+                    lbl = self._drag_ghost.winfo_children()[0]
+                    if target == self._drag_src:
+                        lbl.configure(text=f"☰ {self._drag_src + 1}번 단계 이동 중 (제자리)")
+                    else:
+                        lbl.configure(text=f"☰ {self._drag_src + 1}번 → {target + 1}번 위치로 이동")
+                except tk.TclError:
+                    pass
+
+    def _on_drag_drop(self, event, idx: int):
+        src = self._drag_src
+        target = self._find_drop_index(event.y_root)
+        self._drag_src = None
+        self._drag_target = None
+        self._destroy_drag_ghost()
+        self._update_drag_visuals(None)
+        if src is None or target is None or src == target:
+            return
+        item = self.cfg.steps.pop(src)
+        self.cfg.steps.insert(target, item)
+        self._rebuild_steps()
+        self._save()
+        self._log(f"단계 순서 이동: {src + 1}번 → {target + 1}번 위치")
 
     def _build_settings(self, parent):
         box = ttk.LabelFrame(parent, text="③ 감시 설정", padding=10)
         box.pack(fill="x")
         rows = [
             ("정지 판단 시간(초)", "freeze", "이 시간 동안 변화가 없으면 정지"),
-            ("화면 확인 간격(초)", "interval", "0.3~1.0 권장"),
+            ("화면 확인 간격(초)", "interval", "기본 2초 (0.1~5초)"),
             ("움직임 기준(%)", "motion", "바뀐 화면 비율이 이 값 이상이면 움직임 (낮을수록 민감)"),
             ("사용자 입력 대기(초)", "idle", "내가 마우스/키보드를 쓰는 중이면 클릭 보류"),
             ("클릭 후 재시도(초)", "retry", "이 시간 안에 안 움직이면 재클릭 (0=끔, 최대 3회)"),
@@ -257,7 +490,8 @@ class App:
 
     def pick_region(self):
         select_region(self.root, self._on_region,
-                      "동영상이 재생되는 영역을 드래그하세요\n(Esc / 우클릭: 취소)")
+                      "동영상이 재생되는 영역을 드래그하세요
+(Esc / 우클릭: 취소)")
 
     def _on_region(self, rect):
         if not rect:
@@ -289,7 +523,8 @@ class App:
 
     def _refresh_step(self, i):
         step, w = self.cfg.steps[i], self.step_widgets[i]
-        frame = imread_unicode(self.images_dir / step.image) if step.image else None
+        img_file = (self.images_dir / step.image) if step.image else None
+        frame = imread_unicode(img_file) if img_file and img_file.exists() else None
         self._show_photo(f"step{i}", w["img"], frame, 112, 63, "이미지 없음", 14)
         if step.has_click():
             w["coord"].set(f"클릭 좌표: ({step.click_x}, {step.click_y})")
@@ -303,7 +538,8 @@ class App:
             self.images_dir.mkdir(parents=True, exist_ok=True)
             imwrite_unicode(self._image_path(i), frame)
         except OSError as exc:
-            messagebox.showerror("이미지 저장", f"이미지를 저장하지 못했습니다.\n{exc}")
+            messagebox.showerror("이미지 저장", f"이미지를 저장하지 못했습니다.
+{exc}")
             return
         self.cfg.steps[i].image = self._image_path(i).name
         self._save()
@@ -312,7 +548,8 @@ class App:
 
     def capture_image(self, i):
         select_region(self.root, partial(self._on_image_rect, i),
-                      f"{i + 1}번으로 등록할 화면 부분을 드래그하세요\n(Esc / 우클릭: 취소)")
+                      f"{i + 1}번으로 등록할 화면 부분을 드래그하세요
+(Esc / 우클릭: 취소)")
 
     def _on_image_rect(self, i, rect):
         if not rect:
@@ -334,17 +571,20 @@ class App:
         self._store_image(i, frame)
 
     def clear_image(self, i):
-        try:
-            self._image_path(i).unlink(missing_ok=True)
-        except OSError:
-            pass
-        self.cfg.steps[i].image = ""
+        step = self.cfg.steps[i]
+        if step.image:
+            try:
+                (self.images_dir / step.image).unlink(missing_ok=True)
+            except OSError:
+                pass
+        step.image = ""
         self._save()
         self._refresh_step(i)
 
     def pick_click(self, i):
         pick_point(self.root, partial(self._on_click_point, i),
-                   f"{i + 1}번에서 클릭할 위치를 클릭하세요\n(Esc / 우클릭: 취소)")
+                   f"{i + 1}번에서 클릭할 위치를 클릭하세요
+(Esc / 우클릭: 취소)")
 
     def _on_click_point(self, i, pt):
         if not pt:
@@ -374,7 +614,7 @@ class App:
             return
         plans = build_plans(self.cfg, self.images_dir, self._log)
         if not plans:
-            messagebox.showwarning("단계 설정 필요", "1~3번 중 하나 이상에 클릭 좌표나 이미지를 설정하세요.")
+            messagebox.showwarning("단계 설정 필요", "단계 중 하나 이상에 클릭 좌표나 이미지를 설정하세요.")
             return
         self._save()
         self.stop_event.clear()
@@ -431,7 +671,8 @@ class App:
 
     def _append_log(self, line: str):
         self.log_text.configure(state="normal")
-        self.log_text.insert("end", line + "\n")
+        self.log_text.insert("end", line + "
+")
         if int(self.log_text.index("end-1c").split(".")[0]) > 500:
             self.log_text.delete("1.0", "100.0")
         self.log_text.see("end")
