@@ -1,0 +1,27 @@
+설치 파일(Setup.exe) 만드는 방법
+================================
+
+이 포더에는 Inno Setup 스크립트(installer\VideoAutoClick.iss)가 들어 있습니다.
+실행 파일(dist\VideoAutoClick.exe)이 먼저 만들어져 있어야 합니다.
+
+[방법 1] GitHub Actions로 한 번에 만들기 (추천, 내 PC에 아무것도 설치 불필요)
+  1. 이 포더 전체를 GitHub 저장소에 올립니다 (.github 포더 포함).
+  2. 저장소 상단 [Actions] 탭 → "Build Windows exe + Installer" → [Run workflow]
+  3. 완료 후 Artifacts에서 받을 수 있는 파일:
+       - VideoAutoClick-win11   : 그냥 압축 푼 exe (기존과 동일)
+       - VideoAutoClick-Setup   : 정식 설치 파일 VideoAutoClick-Setup-2.0.exe
+  → 이 workflow는 exe 빌드 + Inno Setup 컴파일까지 자동으로 해 줍니다.
+
+[방법 2] 내 Windows PC에서 만들기
+  1. build_exe.bat 실행 → dist\VideoAutoClick.exe 생성
+  2. https://jrsoftware.org/isdl.php 에서 Inno Setup 6 설치
+  3. installer\VideoAutoClick.iss 를 더블클릭(또는 컴파일) →
+     installer_output\VideoAutoClick-Setup-2.0.exe 생성
+
+설치 파일 특징
+  - 설치 위치: C:\Program Files\VideoAutoClick
+  - 시작 메뉴/바탕 화면 바로 가기 생성
+  - 한국어 설치 마법사
+  - 설정(config.json), 클릭 이미지, 로그는 프로그램이
+    자동으로 %APPDATA%\VideoAutoClick 에 저장합니다 (Program Files는 쓰기 불가하기 때문)
+  - 서명되지 않았으므로 SmartScreen 경고가 뜨면 [추가 정보] → [실행] 선택

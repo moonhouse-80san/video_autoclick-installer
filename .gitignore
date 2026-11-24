@@ -1,0 +1,8 @@
+__pycache__/
+build/
+dist/
+*.spec
+config.json
+autoclick.log
+images/
+.write_test

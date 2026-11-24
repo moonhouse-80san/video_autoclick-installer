@@ -1,0 +1,53 @@
+name: Build Windows exe + Installer
+
+on:
+  workflow_dispatch:        # GitHub 저장소의 Actions 탭에서 [Run workflow] 버튼으로 실행
+  push해도:
+    tags: ["v*"]            # v2.0 같은 태그를 push해도 자동 실행
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Run tests
+        run: python -m unittest discover -s tests
+
+      - name: Build exe
+        run: python -m PyInstaller --noconfirm --clean --onefile --noconsole --name VideoAutoClick main.py
+
+      - name: Package (zip)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item dist/VideoAutoClick.exe package/
+          Copy-Item 사용설명서.txt package/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VideoAutoClick-win11
+          path: package/*
+
+      # ---- 설치 파일(Setup.exe) 자동 생성 추가 ----
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        shell: cmd
+        run: |
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\VideoAutoClick.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VideoAutoClick-Setup
+          path: installer_output/*.exe

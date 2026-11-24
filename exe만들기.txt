@@ -1,0 +1,19 @@
+# Python 설치 없이 쓰는 exe 만드는 방법
+
+exe는 Windows에서 만들어야 합니다. 아래 두 방법 중 편한 것을 쓰세요.
+
+## 방법 1) GitHub에서 자동 빌드 (내 PC에 Python 불필요)
+1. GitHub에 새 저장소를 만들고 이 폴더 전체(.github 폴더 포함)를 올립니다.
+2. 저장소 상단 Actions 탭 → "Build Windows exe" → Run workflow
+3. 2~5분 뒤 실행 결과 화면 아래 Artifacts의 VideoAutoClick-win11 을 내려받아 압축을 풀면
+   VideoAutoClick.exe 가 들어 있습니다. 이 exe는 Python 없이 Windows 11에서 바로 실행됩니다.
+
+## 방법 2) 내 PC에서 한 번만 빌드
+Python 3.10~3.12가 설치된 PC에서 build_exe.bat 실행 → dist\VideoAutoClick.exe 생성
+(만들어진 exe는 다른 PC에 Python이 없어도 실행됩니다)
+
+## 참고
+- exe 크기는 약 50~90MB입니다 (OpenCV 포함).
+- 설정/이미지/로그는 exe와 같은 폴더에 저장됩니다. 폴더에 쓰기 권한이 없으면 %APPDATA%\VideoAutoClick 에 저장됩니다.
+- 서명되지 않은 exe라 Windows SmartScreen("PC 보호") 경고가 뜰 수 있습니다. [추가 정보] → [실행]을 누르세요.
+  백신이 오탐하면 해당 exe를 예외 처리하세요.
