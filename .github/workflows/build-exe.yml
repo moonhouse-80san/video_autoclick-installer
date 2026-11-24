@@ -24,7 +24,27 @@ jobs:
         run: python -m unittest discover -s tests
 
       - name: Build exe
-        run: python -m PyInstaller --noconfirm --clean VideoAutoClick.spec
+        shell: cmd
+        run: |
+          if not exist "VideoAutoClick.spec" if exist "video_autoclick-master\VideoAutoClick.spec" copy /y "video_autoclick-master\VideoAutoClick.spec" "VideoAutoClick.spec"
+          if not exist "VideoAutoClick.spec" (
+            (
+              echo # -*- mode: python ; coding: utf-8 -*-
+              echo from PyInstaller.utils.hooks import collect_all, collect_submodules
+              echo hiddenimports = collect_submodules('vac'^)
+              echo datas, binaries = [], []
+              echo for pkg in ('cv2', 'numpy', 'mss', 'pynput'^):
+              echo     try:
+              echo         d, b, h = collect_all(pkg^)
+              echo         datas += d; binaries += b; hiddenimports += h
+              echo     except Exception:
+              echo         pass
+              echo a = Analysis(['main.py'], pathex=['.'], binaries=binaries, datas=datas, hiddenimports=hiddenimports^)
+              echo pyz = PYZ(a.pure^)
+              echo exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='VideoAutoClick', debug=False, strip=False, upx=True, console=False^)
+            ) > VideoAutoClick.spec
+          )
+          python -m PyInstaller --noconfirm --clean VideoAutoClick.spec
           if not exist "dist\VideoAutoClick.exe" exit /b 1
 
       - name: Package (zip)
