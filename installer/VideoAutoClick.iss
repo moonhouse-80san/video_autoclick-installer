@@ -1,4 +1,4 @@
-; ============================================================
+﻿; ============================================================
 ;  VideoAutoClick - Inno Setup 설치 파일 스크립트
 ;  사용법: Windows에서 Inno Setup 6 설치 후 이 파일을 더블클릭(또는 ISCC.exe로 컴파일)
 ;  전제: build_exe.bat(또는 GitHub Actions)로 dist\VideoAutoClick.exe 가 이미 만들어져 있어야 함
@@ -10,7 +10,7 @@
 #define MyAppExeName   "VideoAutoClick.exe"
 
 [Setup]
-; AppId는 프로그램마다 고유해야 함 (표준 16진수 GUID 형식으로 수정됨)
+; AppId는 프로그램마다 고유해야 함 (표준 16진수 GUID 형식)
 AppId={{8F3C2A51-9D7B-4E6A-B1C4-000000000002}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
