@@ -43,9 +43,9 @@ jobs:
         run: choco install innosetup -y --no-progress
 
       - name: Build installer
-        shell: cmd
-        run: |
-          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\VideoAutoClick.iss
+         shell: cmd
+         run: |
+           "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /O"installer_output" installer\VideoAutoClick.iss
 
       - uses: actions/upload-artifact@v4
         with:
