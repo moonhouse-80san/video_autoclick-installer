@@ -56,28 +56,26 @@ def _add_navigation_menu(app) -> None:
     app.left_panel.grid_configure(row=2)
     app.right_panel.grid_configure(row=2)
 
-    menu = ttk.Frame(app.outer)
-    menu.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-    ttk.Label(menu, text="메뉴:").pack(side="left", padx=(0, 6))
+    app.navigation_menu = ttk.Frame(app.outer)
+    app.navigation_menu.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+    ttk.Label(app.navigation_menu, text="메뉴:").pack(side="left", padx=(0, 6))
     ttk.Button(
-        menu,
+        app.navigation_menu,
         text=f"버전 관리 ({vac.gui.APP_VERSION})",
         command=lambda: _open_url(app, RELEASES_URL),
     ).pack(side="left", padx=(0, 4))
-    ttk.Button(menu, text="제작자", command=lambda: _show_creator(app)).pack(side="left", padx=(0, 4))
-    ttk.Button(menu, text="사용설명서", command=lambda: _open_url(app, MANUAL_URL)).pack(side="left", padx=(0, 4))
-    ttk.Button(menu, text="홈페이지", command=lambda: _open_url(app, HOMEPAGE_URL)).pack(side="left")
+    ttk.Button(app.navigation_menu, text="제작자", command=lambda: _show_creator(app)).pack(side="left", padx=(0, 4))
+    ttk.Button(app.navigation_menu, text="사용설명서", command=lambda: _open_url(app, MANUAL_URL)).pack(side="left", padx=(0, 4))
+    ttk.Button(app.navigation_menu, text="홈페이지", command=lambda: _open_url(app, HOMEPAGE_URL)).pack(side="left")
 
 
 def _install_navigation_menu() -> None:
-    """기존 UI를 만든 직후 메뉴를 추가해 실행 화면에 적용합니다."""
-    # 창 제목 표시줄에는 프로그램명만 표시합니다.
+    """기존 UI에 접기 시 숨길 수 있는 메뉴를 추가합니다."""
     vac.gui.APP_TITLE = "동영상 정지 감지 오토클릭"
     build_ui = vac.gui.App._build_ui
 
     def build_ui_with_navigation(app):
         build_ui(app)
-        # 본 화면 우측 상단의 버전/제작자 표시는 제거합니다.
         app.creator_link_lbl.destroy()
         _add_navigation_menu(app)
 
@@ -85,7 +83,7 @@ def _install_navigation_menu() -> None:
 
 
 def main() -> None:
-    enable_dpi_awareness()  # Tk 창을 만들기 전에 반드시 먼저 호출
+    enable_dpi_awareness()
     _install_navigation_menu()
     vac.gui.run()
 
