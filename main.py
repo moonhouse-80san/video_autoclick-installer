@@ -58,6 +58,7 @@ def _add_navigation_menu(app) -> None:
 
     menu = ttk.Frame(app.outer)
     menu.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+    app.navigation_menu = menu
     ttk.Label(menu, text="메뉴:").pack(side="left", padx=(0, 6))
     ttk.Button(
         menu,
@@ -74,6 +75,7 @@ def _install_navigation_menu() -> None:
     # 창 제목 표시줄에는 프로그램명만 표시합니다.
     vac.gui.APP_TITLE = "동영상 정지 감지 오토클릭"
     build_ui = vac.gui.App._build_ui
+    apply_left_panel_state = vac.gui.App._apply_left_panel_state
 
     def build_ui_with_navigation(app):
         build_ui(app)
@@ -81,7 +83,18 @@ def _install_navigation_menu() -> None:
         app.creator_link_lbl.destroy()
         _add_navigation_menu(app)
 
+    def apply_panel_state_with_menu(app, initial: bool = False):
+        # 접기/펼치기 계산 전에 메뉴를 숨기거나 복원해 창 크기에도 반영합니다.
+        menu = getattr(app, "navigation_menu", None)
+        if menu is not None:
+            if app._left_collapsed:
+                menu.grid_remove()
+            else:
+                menu.grid()
+        apply_left_panel_state(app, initial=initial)
+
     vac.gui.App._build_ui = build_ui_with_navigation
+    vac.gui.App._apply_left_panel_state = apply_panel_state_with_menu
 
 
 def main() -> None:
