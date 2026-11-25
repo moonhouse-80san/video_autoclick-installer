@@ -54,6 +54,7 @@ class Settings:
     loop: bool = False              # 마지막 단계 후 1번부터 반복
     restore_cursor: bool = True     # 클릭 후 마우스를 원래 위치로
     minimize_on_start: bool = True  # 시작 시 창 최소화
+    restore_window: bool = True     # (대상 창 모드) 클릭 후 원래 앞에 있던 창으로 복귀
 
 
 def _coerce(default, value):
@@ -72,13 +73,15 @@ def _int_or_none(value):
 
 @dataclass
 class Config:
-    region: list[int] | None = None  # [left, top, width, height] (화면 픽셀)
+    region: list[int] | None = None  # [left, top, width, height] (target이 있으면 창 기준, 없으면 화면 픽셀)
+    target: dict | None = None       # 대상 창 {'title','cls','exe'}. 있으면 region/클릭 좌표는 창 기준
     steps: list[Step] = field(default_factory=lambda: [Step() for _ in range(STEP_COUNT)])
     settings: Settings = field(default_factory=Settings)
 
     def save(self, path: Path) -> None:
         data = {
             "region": self.region,
+            "target": self.target,
             "steps": [asdict(s) for s in self.steps],
             "settings": asdict(self.settings),
         }
@@ -100,6 +103,10 @@ class Config:
         if (isinstance(reg, list) and len(reg) == 4
                 and all(_int_or_none(v) is not None for v in reg) and reg[2] > 0 and reg[3] > 0):
             cfg.region = list(reg)
+
+        tgt = raw.get("target")
+        if isinstance(tgt, dict) and isinstance(tgt.get("cls"), str) and tgt["cls"]:
+            cfg.target = {k: (tgt.get(k) if isinstance(tgt.get(k), str) else "") for k in ("title", "cls", "exe")}
 
         steps = raw.get("steps")
         if isinstance(steps, list):

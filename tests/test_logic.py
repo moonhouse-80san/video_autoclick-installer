@@ -262,5 +262,106 @@ class ConfigTests(unittest.TestCase):
             self.assertTrue(cfg.settings.loop)
 
 
+class WindowTargetTests(unittest.TestCase):
+    def test_pick_candidate_prefers_exact_title_then_similar(self):
+        from vac.target import pick_candidate
+        cands = [
+            {"hwnd": 1, "title": "메모장", "cls": "Notepad", "exe": "notepad.exe"},
+            {"hwnd": 2, "title": "강의 1강 - Google Chrome", "cls": "Chrome_WidgetWin_1", "exe": "chrome.exe"},
+            {"hwnd": 3, "title": "뉴스 - Google Chrome", "cls": "Chrome_WidgetWin_1", "exe": "chrome.exe"},
+        ]
+        self.assertEqual(pick_candidate(cands, "뉴스 - Google Chrome", "Chrome_WidgetWin_1", "chrome.exe"), 3)
+        self.assertEqual(pick_candidate(cands, "강의 2강 - Google Chrome", "Chrome_WidgetWin_1", "chrome.exe"), 2)
+        self.assertIsNone(pick_candidate(cands, "x", "Other", "chrome.exe"))
+        self.assertIsNone(pick_candidate([], "x", "Chrome_WidgetWin_1", "chrome.exe"))
+
+    def test_is_pickable_rejects_desktop_taskbar_and_self(self):
+        from vac.target import is_pickable
+        self.assertFalse(is_pickable(None, 1))
+        self.assertFalse(is_pickable({"cls": "Progman", "pid": 5}, 1))
+        self.assertFalse(is_pickable({"cls": "Shell_TrayWnd", "pid": 5}, 1))
+        self.assertFalse(is_pickable({"cls": "TkTopLevel", "pid": 1}, 1))
+        self.assertTrue(is_pickable({"cls": "Chrome_WidgetWin_1", "pid": 5}, 1))
+
+    def test_coordinate_conversion(self):
+        from vac.target import point_to_client, rect_to_client
+        client = (100, 50, 800, 600)
+        self.assertEqual(rect_to_client((150, 100, 200, 100), client), (50, 50, 200, 100))
+        self.assertEqual(rect_to_client((50, 20, 200, 100), client), (0, 0, 150, 70))  # 창 밖은 잘라냄
+        self.assertIsNone(rect_to_client((0, 0, 50, 50), client))                       # 완전히 밖
+        self.assertEqual(point_to_client((110, 60), client), (10, 10))
+        self.assertIsNone(point_to_client((99, 60), client))
+        self.assertIsNone(point_to_client((900, 60), client))
+
+    def test_config_roundtrip_with_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "config.json"
+            cfg = Config()
+            cfg.target = {"title": "강의", "cls": "Chrome_WidgetWin_1", "exe": "chrome.exe"}
+            cfg.region = [10, 20, 300, 200]
+            cfg.settings.restore_window = False
+            cfg.save(p)
+            back = Config.load(p)
+            self.assertEqual(back.target, cfg.target)
+            self.assertEqual(back.region, [10, 20, 300, 200])
+            self.assertFalse(back.settings.restore_window)
+            p.write_text('{"target": {"title": 1}}', encoding="utf-8")
+            self.assertIsNone(Config.load(p).target)  # cls 없으면 무시
+
+
+class WindowGrabberTests(unittest.TestCase):
+    class T:
+        def __init__(self, hwnd=7):
+            self.hwnd = hwnd
+
+        def resolve(self):
+            return self.hwnd
+
+    def _patch(self, shot, minimized=False):
+        from vac import winapi
+        self._orig = (winapi.print_window, winapi.is_minimized)
+        winapi.print_window = lambda hwnd: shot
+        winapi.is_minimized = lambda hwnd: minimized
+        self.addCleanup(lambda: (setattr(winapi, "print_window", self._orig[0]),
+                                 setattr(winapi, "is_minimized", self._orig[1])))
+
+    @staticmethod
+    def _shot(fill=None, w=120, h=100, client=(10, 20, 100, 70)):
+        arr = np.zeros((h, w, 4), np.uint8)
+        if fill is not None:
+            arr[20:90, 10:110, :3] = fill
+        return w, h, arr.tobytes(), client
+
+    def test_crops_client_and_region(self):
+        from vac.capture import WindowGrabber
+        self._patch(self._shot(fill=50))
+        g = WindowGrabber(self.T())
+        self.assertEqual(g.grab_client().shape, (70, 100, 3))
+        self.assertEqual(g.grab_region((5, 5, 40, 30)).shape, (30, 40, 3))
+        with self.assertRaises(RuntimeError):
+            g.grab_region((500, 500, 40, 30))  # 창 밖
+
+    def test_black_capture_minimized_and_missing_window_raise(self):
+        from vac.capture import WindowGrabber
+        self._patch(self._shot(fill=None))
+        with self.assertRaises(RuntimeError):
+            WindowGrabber(self.T()).grab_client()  # 완전 검은 화면 → 정지로 오인 금지
+        self._patch(self._shot(fill=50), minimized=True)
+        with self.assertRaises(RuntimeError):
+            WindowGrabber(self.T()).grab_client()
+        self._patch(self._shot(fill=50))
+        with self.assertRaises(RuntimeError):
+            WindowGrabber(self.T(hwnd=None)).grab_client()
+        self._patch(None)
+        with self.assertRaises(RuntimeError):
+            WindowGrabber(self.T()).grab_client()
+
+    def test_engine_works_with_window_relative_coordinates(self):
+        """창 기준 좌표로 감시/클릭해도 엔진은 같은 좌표계를 그대로 클릭 함수에 전달."""
+        plans = [StepPlan(0, (30, 40), None)]
+        _, clicks, _ = drive(plans, moving_windows((0, 3)))
+        self.assertEqual([(x, y) for _, x, y in clicks], [(30, 40)])
+
+
 if __name__ == "__main__":
     unittest.main()

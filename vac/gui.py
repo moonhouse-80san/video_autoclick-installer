@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import queue
 import threading
 import time
@@ -15,10 +16,11 @@ from tkinter import filedialog, messagebox, ttk
 import cv2
 
 from . import winapi
-from .capture import ScreenGrabber, imread_unicode, imwrite_unicode
+from .capture import ScreenGrabber, WindowGrabber, imread_unicode, imwrite_unicode
 from .config import Config, Step, data_dir
 from .engine import Engine, build_plans
 from .overlay import pick_point, select_region
+from .target import WindowTarget, is_pickable, point_to_client, rect_to_client
 
 APP_TITLE = "동영상 정지 감지 오토클릭"
 FONT = "맑은 고딕"
@@ -68,6 +70,9 @@ class App:
         self.b_loop = tk.BooleanVar()
         self.b_restore = tk.BooleanVar()
         self.b_minimize = tk.BooleanVar()
+        self.b_restore_win = tk.BooleanVar()
+        self.target_text = tk.StringVar()
+        self._target: WindowTarget | None = None
         self.step_widgets: list[dict] = []
 
         root.title(APP_TITLE)
@@ -116,6 +121,11 @@ class App:
         ttk.Label(box, textvariable=self.region_text).grid(row=0, column=1, sticky="w")
         ttk.Button(box, text="영역 드래그로 지정", command=self.pick_region).grid(row=1, column=1, sticky="w", pady=4)
         ttk.Button(box, text="미리보기 새로고침", command=self.refresh_region_preview).grid(row=2, column=1, sticky="w")
+        trow = ttk.Frame(box)
+        trow.grid(row=3, column=0, columnspan=2, sticky="we", pady=(10, 0))
+        ttk.Label(trow, textvariable=self.target_text, wraplength=300, justify="left").pack(side="left")
+        ttk.Button(trow, text="해제", width=5, command=self.clear_target).pack(side="right")
+        ttk.Button(trow, text="창 지정", width=8, command=self.pick_target).pack(side="right", padx=4)
 
     def _bind_drag(self, widget, idx: int):
         widget.bind("<ButtonPress-1>", lambda e, i=idx: self._on_drag_start(e, i))
@@ -389,6 +399,7 @@ class App:
             (self.b_loop, "마지막 단계 후 1번부터 반복"),
             (self.b_restore, "클릭 후 마우스를 원래 위치로 되돌리기"),
             (self.b_minimize, "시작하면 창 최소화"),
+            (self.b_restore_win, "대상 창 모드: 클릭 후 원래 창으로 복귀"),
         ]
         for i, (var, text) in enumerate(checks):
             ttk.Checkbutton(box, text=text, variable=var).grid(row=len(rows) + i, column=0, columnspan=3,
@@ -423,6 +434,7 @@ class App:
         self.b_loop.set(s.loop)
         self.b_restore.set(s.restore_cursor)
         self.b_minimize.set(s.minimize_on_start)
+        self.b_restore_win.set(s.restore_window)
 
     @staticmethod
     def _num(var, name, lo, hi):
@@ -453,6 +465,7 @@ class App:
         s.idle_wait, s.retry_seconds, s.threshold = idle, retry, threshold
         s.use_images, s.loop = self.b_use_images.get(), self.b_loop.get()
         s.restore_cursor, s.minimize_on_start = self.b_restore.get(), self.b_minimize.get()
+        s.restore_window = self.b_restore_win.get()
         return True
 
     def _save(self):
@@ -483,10 +496,90 @@ class App:
         self._photos[key] = photo
         label.configure(image=photo, text="", width=0)
 
+    def _get_target(self) -> WindowTarget | None:
+        t = self.cfg.target
+        if not t:
+            self._target = None
+            return None
+        if self._target is None or self._target.to_dict() != t:
+            self._target = WindowTarget.from_dict(t)
+        return self._target
+
+    def _client_rect(self, target: WindowTarget):
+        """대상 창의 클라이언트 영역(화면 좌표). 실패하면 안내 후 None."""
+        hwnd = target.resolve()
+        rect = winapi.client_rect_screen(hwnd) if hwnd else None
+        if rect is None:
+            messagebox.showerror("대상 창", "대상 창을 찾을 수 없거나 최소화되어 있습니다.\n"
+                                          "창을 화면에 띄운 뒤 다시 시도하세요.")
+        return rect
+
+    def _preview_grab(self, rect):
+        """미리보기용 캡처: 대상 창 모드면 창 캡처(가려져 있어도 됨), 아니면 화면 캡처."""
+        t = self._get_target()
+        if t is None:
+            return self._grab(rect)
+        try:
+            return WindowGrabber(t).grab_region(rect)
+        except Exception as exc:
+            self._log(f"창 캡처 실패: {exc}")
+            return None
+
+    def _reset_coords(self):
+        """좌표 기준(화면 ↔ 창)이 바뀌면 기존 영역/클릭 좌표는 쓸 수 없으므로 초기화."""
+        self.cfg.region = None
+        for st in self.cfg.steps:
+            st.click_x = st.click_y = None
+        self._refresh_region()
+        for i in range(len(self.cfg.steps)):
+            self._refresh_step(i)
+
     def _refresh_region(self, frame=None):
         r = self.cfg.region
-        self.region_text.set("영역 미지정" if not r else f"X={r[0]}, Y={r[1]}  크기 {r[2]}×{r[3]}")
+        t = self._get_target()
+        suffix = "  (창 기준)" if t else ""
+        self.region_text.set("영역 미지정" if not r else f"X={r[0]}, Y={r[1]}  크기 {r[2]}×{r[3]}{suffix}")
+        self.target_text.set(f"대상 창: {t.label()}" if t else "대상 창: 없음 (화면 기준 · 영상이 가려지면 안 됨)")
         self._show_photo("region", self.region_img, frame, 200, 112, "미리보기 없음", 18)
+
+    def pick_target(self):
+        pick_point(self.root, self._on_target_point,
+                   "감시할 동영상이 있는 창 안을 클릭하세요\n(Esc / 우클릭: 취소)")
+
+    def _on_target_point(self, pt):
+        if not pt:
+            return
+        hwnd = winapi.top_window_at(pt[0], pt[1])
+        info = winapi.window_info(hwnd) if hwnd else None
+        if not is_pickable(info, os.getpid()):
+            messagebox.showerror("대상 창", "창을 확인하지 못했습니다. 동영상이 보이는 창 안을 클릭하세요.")
+            return
+        new = WindowTarget.from_info(info)
+        old = self.cfg.target
+        changed = not old or old.get("cls") != new.cls or old.get("exe") != new.exe
+        self.cfg.target = new.to_dict()
+        self._target = new
+        if changed:
+            self._reset_coords()
+        else:
+            self._refresh_region()
+        self._save()
+        self._log(f"대상 창 지정: {new.label()}")
+        if changed:
+            self._log("좌표 기준이 창으로 바뀌어 감시 영역/클릭 좌표를 초기화했습니다. 다시 지정하세요. (이미지는 유지)")
+
+    def clear_target(self):
+        if not self.cfg.target:
+            return
+        has_coords = bool(self.cfg.region) or any(st.has_click() for st in self.cfg.steps)
+        if has_coords and not messagebox.askyesno(
+                "대상 창 해제", "대상 창을 해제하면 감시 영역과 클릭 좌표가 초기화됩니다.\n계속할까요?"):
+            return
+        self.cfg.target = None
+        self._target = None
+        self._reset_coords()
+        self._save()
+        self._log("대상 창 해제: 화면 기준으로 동작합니다.")
 
     def pick_region(self):
         select_region(self.root, self._on_region,
@@ -495,16 +588,28 @@ class App:
     def _on_region(self, rect):
         if not rect:
             return
+        t = self._get_target()
+        if t:
+            client = self._client_rect(t)
+            if client is None:
+                return
+            rect = rect_to_client(rect, client)
+            if rect is None:
+                messagebox.showerror("감시 영역", "선택한 영역이 대상 창 밖입니다. 창 안쪽을 드래그하세요.")
+                return
         self.cfg.region = list(rect)
         self._save()
-        self._refresh_region(self._grab(rect))
-        self._log(f"감시 영역 지정: X={rect[0]}, Y={rect[1]}, {rect[2]}×{rect[3]}")
+        self._refresh_region(self._preview_grab(rect))
+        self._log(f"감시 영역 지정{' (창 기준)' if t else ''}: X={rect[0]}, Y={rect[1]}, {rect[2]}×{rect[3]}")
 
     def refresh_region_preview(self):
         if not self.cfg.region:
             messagebox.showinfo("감시 영역", "먼저 감시 영역을 지정하세요.")
             return
         rect = tuple(self.cfg.region)
+        if self._get_target():  # 창 캡처는 이 프로그램 창이 앞에 있어도 영향 없음
+            self._refresh_region(self._preview_grab(rect))
+            return
         self.root.withdraw()
 
         def go():
@@ -526,7 +631,7 @@ class App:
         frame = imread_unicode(img_file) if img_file and img_file.exists() else None
         self._show_photo(f"step{i}", w["img"], frame, 112, 63, "이미지 없음", 14)
         if step.has_click():
-            w["coord"].set(f"클릭 좌표: ({step.click_x}, {step.click_y})")
+            w["coord"].set(f"클릭 좌표: ({step.click_x}, {step.click_y})" + (" (창 기준)" if self.cfg.target else ""))
         elif step.image:
             w["coord"].set("이미지가 보이면 그 중앙 클릭")
         else:
@@ -585,6 +690,15 @@ class App:
     def _on_click_point(self, i, pt):
         if not pt:
             return
+        t = self._get_target()
+        if t:
+            client = self._client_rect(t)
+            if client is None:
+                return
+            pt = point_to_client(pt, client)
+            if pt is None:
+                messagebox.showerror("클릭 좌표", "클릭 위치가 대상 창 밖입니다. 창 안쪽을 클릭하세요.")
+                return
         self.cfg.steps[i].click_x, self.cfg.steps[i].click_y = int(pt[0]), int(pt[1])
         self._save()
         self._refresh_step(i)
@@ -612,6 +726,13 @@ class App:
         if not plans:
             messagebox.showwarning("단계 설정 필요", "단계 중 하나 이상에 클릭 좌표나 이미지를 설정하세요.")
             return
+        t = self._get_target()
+        if t:  # 시작 전에 창 캡처가 되는지 확인 (검은 화면을 정지로 오인하는 사고 방지)
+            try:
+                WindowGrabber(t).grab_region(tuple(self.cfg.region))
+            except Exception as exc:
+                messagebox.showerror("대상 창", f"대상 창을 캡처할 수 없어 시작하지 않았습니다.\n\n{exc}")
+                return
         self._save()
         self.stop_event.clear()
         self.start_btn.configure(state="disabled")
@@ -634,11 +755,23 @@ class App:
         result = ("error", "알 수 없는 오류")
         grabber = None
         try:
-            grabber = ScreenGrabber()  # 감시 스레드 안에서 생성
             s = self.cfg.settings
+            t = self._get_target()
+            if t:
+                grabber = WindowGrabber(t)
+
+                def clicker(x, y):
+                    hwnd = t.resolve()
+                    if not hwnd or not winapi.click_in_window(hwnd, x, y, s.restore_cursor, s.restore_window):
+                        self._log("클릭 실패: 대상 창을 앞으로 가져오지 못했거나 클릭 위치가 다른 창에 가려져 있습니다.")
+            else:
+                grabber = ScreenGrabber()  # 감시 스레드 안에서 생성
+
+                def clicker(x, y):
+                    winapi.click(x, y, restore_cursor=s.restore_cursor)
             engine = Engine(
                 region=self.cfg.region, plans=plans, settings=s, grabber=grabber,
-                clicker=lambda x, y: winapi.click(x, y, restore_cursor=s.restore_cursor),
+                clicker=clicker,
                 idle_fn=winapi.idle_seconds, log=self._log,
                 status=lambda text: self.ui_queue.put(("status", text)))
             result = engine.run(self.stop_event)
