@@ -77,6 +77,7 @@ class Config:
     target: dict | None = None       # 대상 창 {'title','cls','exe'}. 있으면 region/클릭 좌표는 창 기준
     steps: list[Step] = field(default_factory=lambda: [Step() for _ in range(STEP_COUNT)])
     settings: Settings = field(default_factory=Settings)
+    left_collapsed: bool = False
 
     def save(self, path: Path) -> None:
         data = {
@@ -84,6 +85,7 @@ class Config:
             "target": self.target,
             "steps": [asdict(s) for s in self.steps],
             "settings": asdict(self.settings),
+            "left_collapsed": self.left_collapsed,
         }
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -126,4 +128,7 @@ class Config:
             for key, value in saved.items():
                 if hasattr(cfg.settings, key):
                     setattr(cfg.settings, key, _coerce(getattr(cfg.settings, key), value))
+
+        if isinstance(raw.get("left_collapsed"), bool):
+            cfg.left_collapsed = raw["left_collapsed"]
         return cfg

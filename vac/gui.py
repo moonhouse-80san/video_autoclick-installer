@@ -9,6 +9,7 @@ import threading
 import time
 import tkinter as tk
 import traceback
+import webbrowser
 from functools import partial
 from logging.handlers import RotatingFileHandler
 from tkinter import filedialog, messagebox, ttk
@@ -22,7 +23,10 @@ from .engine import Engine, build_plans
 from .overlay import pick_point, select_region
 from .target import WindowTarget, is_pickable, point_to_client, rect_to_client
 
-APP_TITLE = "동영상 정지 감지 오토클릭"
+APP_VERSION = "V 2.0"
+CREATOR_NAME = "MoonHouse"
+CREATOR_URL = "https://moonhouse.co.kr/"
+APP_TITLE = f"동영상 정지 감지 오토클릭  {APP_VERSION} | 제작자:{CREATOR_NAME}"
 FONT = "맑은 고딕"
 
 
@@ -61,6 +65,8 @@ class App:
         self._drag_target: int | None = None
         self._drag_ghost: tk.Toplevel | None = None
         self._default_row_bg: str = "SystemButtonFace"
+        self._left_collapsed: bool = bool(self.cfg.left_collapsed)
+        self._expanded_size: tuple[int, int] | None = None
 
         self.status_var = tk.StringVar(value="대기 중")
         self.region_text = tk.StringVar()
@@ -89,6 +95,7 @@ class App:
         self._load_vars()
         self._refresh_region()
         self._rebuild_steps()
+        self._apply_left_panel_state(initial=True)
 
         self.hotkeys = winapi.HotkeyListener({winapi.VK_F8: lambda: self.ui_queue.put(("toggle",))})
         self.hotkeys.start()
@@ -98,20 +105,98 @@ class App:
         self.root.after(100, self._poll)
 
     # ------------------------------------------------------------------ UI
+    def _open_creator_url(self, _event=None):
+        try:
+            webbrowser.open_new_tab(CREATOR_URL)
+        except Exception as exc:
+            self._log(f"브라우저 열기 실패: {exc}")
+
     def _build_ui(self):
-        outer = ttk.Frame(self.root, padding=12)
-        outer.pack(fill="both", expand=True)
-        outer.columnconfigure(1, weight=1)
-        outer.rowconfigure(0, weight=1)
-        left = ttk.Frame(outer)
-        left.grid(row=0, column=0, sticky="n")
-        right = ttk.Frame(outer)
-        right.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
-        self._build_region(left)
-        self._build_steps(left)
-        self._build_settings(right)
-        self._build_controls(right)
-        self._build_log(right)
+        self.outer = ttk.Frame(self.root, padding=10)
+        self.outer.pack(fill="both", expand=True)
+        self.outer.columnconfigure(1, weight=1)
+        self.outer.rowconfigure(1, weight=1)
+
+        # 최상단 헤더: 프로그램 제목 + 우측 버전/제작자 링크
+        self.header_bar = ttk.Frame(self.outer)
+        self.header_bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        self.header_title_lbl = ttk.Label(
+            self.header_bar,
+            text="동영상 정지 감지 오토클릭",
+            font=(FONT, 11, "bold"),
+        )
+        self.header_title_lbl.pack(side="left")
+
+        self.creator_link_lbl = tk.Label(
+            self.header_bar,
+            text=f"{APP_VERSION} | 제작자:{CREATOR_NAME}",
+            font=(FONT, 9, "underline"),
+            fg="#1d4ed8",
+            cursor="hand2",
+        )
+        self.creator_link_lbl.pack(side="right", padx=(8, 0))
+        self.creator_link_lbl.bind("<Button-1>", self._open_creator_url)
+        self.creator_link_lbl.bind("<Enter>", lambda _e: self.creator_link_lbl.configure(fg="#1e40af"))
+        self.creator_link_lbl.bind("<Leave>", lambda _e: self.creator_link_lbl.configure(fg="#1d4ed8"))
+
+        self.left_panel = ttk.Frame(self.outer)
+        self.left_panel.grid(row=1, column=0, sticky="n", padx=(0, 12))
+        self.right_panel = ttk.Frame(self.outer)
+        self.right_panel.grid(row=1, column=1, sticky="nsew")
+        self._build_region(self.left_panel)
+        self._build_steps(self.left_panel)
+        self._build_settings(self.right_panel)
+        self._build_controls(self.right_panel)
+        self._build_log(self.right_panel)
+
+    def _apply_left_panel_state(self, initial: bool = False):
+        self.root.update_idletasks()
+        cur_w = self.root.winfo_width()
+        cur_h = self.root.winfo_height()
+        cur_x = self.root.winfo_x()
+        cur_y = self.root.winfo_y()
+
+        if self._left_collapsed:
+            if not initial and cur_w > 1 and cur_h > 1:
+                self._expanded_size = (cur_w, cur_h)
+            self.header_title_lbl.configure(text="오토클릭", font=(FONT, 9, "bold"))
+            self.left_panel.grid_remove()
+            self.settings_box.pack_forget()
+            self.f8_hint_lbl.pack_forget()
+            self.log_text.configure(width=30, height=5)
+            self.status_lbl.configure(wraplength=230)
+            self.toggle_left_btn.configure(text="▶ 펼치기")
+            self.root.update_idletasks()
+            req_w = max(265, self.outer.winfo_reqwidth() + 8)
+            req_h = self.outer.winfo_reqheight() + 8
+            if initial:
+                self.root.geometry(f"{req_w}x{req_h}")
+            else:
+                self.root.geometry(f"{req_w}x{req_h}+{cur_x}+{cur_y}")
+        else:
+            self.header_title_lbl.configure(text="동영상 정지 감지 오토클릭", font=(FONT, 11, "bold"))
+            self.left_panel.grid()
+            self.settings_box.pack(fill="x", before=self.controls_bar)
+            self.f8_hint_lbl.pack(side="left", padx=6, before=self.toggle_left_btn)
+            self.log_text.configure(width=56, height=7)
+            self.status_lbl.configure(wraplength=420)
+            self.toggle_left_btn.configure(text="◀ 접기")
+            self.root.update_idletasks()
+            if self._expanded_size is not None:
+                req_w, req_h = self._expanded_size
+            else:
+                req_w = self.outer.winfo_reqwidth() + 8
+                req_h = self.outer.winfo_reqheight() + 8
+            if initial:
+                self.root.geometry(f"{req_w}x{req_h}")
+            else:
+                self.root.geometry(f"{req_w}x{req_h}+{cur_x}+{cur_y}")
+
+    def toggle_left_panel(self):
+        self._left_collapsed = not self._left_collapsed
+        self.cfg.left_collapsed = self._left_collapsed
+        self._apply_left_panel_state(initial=False)
+        self._save()
 
     def _build_region(self, parent):
         box = ttk.LabelFrame(parent, text="① 감시 영역 (동영상 화면)", padding=10)
@@ -133,7 +218,6 @@ class App:
         widget.bind("<ButtonRelease-1>", lambda e, i=idx: self._on_drag_drop(e, i))
 
     def _create_step_row(self, parent, i: int):
-        # 삽입 위치 인디케이터 바 (위/아래 표시용)
         top_bar = tk.Frame(parent, height=3, bg=self._default_row_bg)
         top_bar.pack(fill="x", pady=(2, 0))
 
@@ -318,11 +402,9 @@ class App:
             try:
                 w["top_bar"].configure(bg=self._default_row_bg)
                 if src is not None and i == src:
-                    # 현재 끌고 있는 원본 행: 점선/연회색 비활성 스타일로 표시
                     w["row"].configure(bg="#e5e7eb", highlightbackground="#6b7280", highlightthickness=1)
                     w["grip"].configure(bg="#e5e7eb", fg="#6b7280")
                 elif src is not None and target is not None and i == target and target != src:
-                    # 이동될 목표 위치 행: 파란/노란 강조 + 삽입선 표시
                     w["row"].configure(bg="#fef3c7", highlightbackground="#2563eb", highlightthickness=2)
                     w["grip"].configure(bg="#fef3c7", fg="#1d4ed8")
                     if target < src:
@@ -380,8 +462,9 @@ class App:
         self._log(f"단계 순서 이동: {src + 1}번 → {target + 1}번 위치")
 
     def _build_settings(self, parent):
-        box = ttk.LabelFrame(parent, text="③ 감시 설정", padding=10)
-        box.pack(fill="x")
+        self.settings_box = ttk.LabelFrame(parent, text="③ 감시 설정", padding=10)
+        self.settings_box.pack(fill="x")
+        box = self.settings_box
         rows = [
             ("정지 판단 시간(초)", "freeze", "이 시간 동안 변화가 없으면 정지"),
             ("화면 확인 간격(초)", "interval", "기본 2초 (0.1~5초)"),
@@ -406,20 +489,26 @@ class App:
                                                               sticky="w", pady=(6 if i == 0 else 0, 0))
 
     def _build_controls(self, parent):
-        bar = ttk.Frame(parent)
-        bar.pack(fill="x", pady=10)
+        self.controls_bar = ttk.Frame(parent)
+        self.controls_bar.pack(fill="x", pady=(0, 8))
+        bar = self.controls_bar
         self.start_btn = ttk.Button(bar, text="감시 시작 (F8)", command=self.start)
         self.start_btn.pack(side="left")
         self.stop_btn = ttk.Button(bar, text="감시 중지 (F8)", command=self.stop, state="disabled")
-        self.stop_btn.pack(side="left", padx=8)
-        ttk.Label(bar, text="F8은 다른 창을 쓰는 중에도 동작합니다", foreground="#666").pack(side="left", padx=6)
+        self.stop_btn.pack(side="left", padx=4)
+        self.f8_hint_lbl = ttk.Label(bar, text="F8은 다른 창을 쓰는 중에도 동작합니다", foreground="#666")
+        self.f8_hint_lbl.pack(side="left", padx=6)
+        self.toggle_left_btn = ttk.Button(bar, text="◀ 접기", width=8, command=self.toggle_left_panel)
+        self.toggle_left_btn.pack(side="right")
 
     def _build_log(self, parent):
-        box = ttk.LabelFrame(parent, text="상태", padding=10)
-        box.pack(fill="both", expand=True)
-        ttk.Label(box, textvariable=self.status_var, wraplength=420, font=(FONT, 10, "bold")).pack(anchor="w")
+        self.log_box = ttk.LabelFrame(parent, text="상태", padding=8)
+        self.log_box.pack(fill="both", expand=True)
+        box = self.log_box
+        self.status_lbl = ttk.Label(box, textvariable=self.status_var, wraplength=420, font=(FONT, 9, "bold"))
+        self.status_lbl.pack(anchor="w")
         self.log_text = tk.Text(box, height=7, width=56, wrap="word", state="disabled", font=(FONT, 9))
-        self.log_text.pack(fill="both", expand=True, pady=(8, 0))
+        self.log_text.pack(fill="both", expand=True, pady=(6, 0))
 
     # ------------------------------------------------------------ settings
     def _load_vars(self):
@@ -469,6 +558,7 @@ class App:
         return True
 
     def _save(self):
+        self.cfg.left_collapsed = self._left_collapsed
         try:
             self.cfg.save(self.config_path)
         except OSError as exc:
