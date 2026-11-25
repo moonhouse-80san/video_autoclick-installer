@@ -71,10 +71,14 @@ def _add_navigation_menu(app) -> None:
 
 def _install_navigation_menu() -> None:
     """기존 UI를 만든 직후 메뉴를 추가해 실행 화면에 적용합니다."""
+    # 창 제목 표시줄에는 프로그램명만 표시합니다.
+    vac.gui.APP_TITLE = "동영상 정지 감지 오토클릭"
     build_ui = vac.gui.App._build_ui
 
     def build_ui_with_navigation(app):
         build_ui(app)
+        # 본 화면 우측 상단의 버전/제작자 표시는 제거합니다.
+        app.creator_link_lbl.destroy()
         _add_navigation_menu(app)
 
     vac.gui.App._build_ui = build_ui_with_navigation
